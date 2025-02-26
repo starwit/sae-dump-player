@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "sae-dump-player"
+version = "0.1.0"
+description = ""
+authors = ["flonix8 <flstanek@googlemail.com>"]
+license = "AGPLv3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = {extras = ["standard"], version = "^0.115.8"}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
