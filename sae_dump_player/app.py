@@ -1,25 +1,46 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-import os
-import uuid
-import shutil
-import time
-import sqlite3
-from sqlite3 import Connection, Row
 import multiprocessing
-from typing import Dict, List
-from contextlib import contextmanager
+import os
+import shutil
+import sqlite3
+import uuid
+from pathlib import Path
+from typing import Dict
+
+from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic_settings import BaseSettings
+
+from . import player
+
+
+class Config(BaseSettings):
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    upload_dir: Path = Path("./uploads")
+    db_path: Path = Path("sqlite.db")
 
 app = FastAPI()
 
-# Config
-UPLOAD_DIR = "uploads"
-DB_PATH = "file_storage.db"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.add_middleware(
+    CORSMiddleware, 
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+prefix_router = APIRouter(prefix="/api")
+
+CONFIG = Config()
+os.makedirs(CONFIG.upload_dir, exist_ok=True)
+
+# Track running processes
+active_processes: Dict[str, multiprocessing.Process] = {}
 
 # Database setup
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(CONFIG.db_path)
     conn.execute('''
     CREATE TABLE IF NOT EXISTS files (
         id TEXT PRIMARY KEY,
@@ -49,12 +70,16 @@ async def startup_event():
 
 # Helper function to get a new database connection
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(CONFIG.db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
+@app.get("/")
+async def serve_index():
+    return FileResponse('static/index.html')
+
 # File endpoints
-@app.post("/upload/")
+@prefix_router.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
     # Connect to the database from within this request handler
     conn = get_db_connection()
@@ -64,7 +89,7 @@ async def upload_file(file: UploadFile = File(...)):
         file_id = str(uuid.uuid4())
         
         # Create path for saving the file
-        file_path = os.path.join(UPLOAD_DIR, file_id)
+        file_path = CONFIG.upload_dir / file_id
         
         # Save the file
         with open(file_path, "wb") as buffer:
@@ -73,7 +98,7 @@ async def upload_file(file: UploadFile = File(...)):
         # Store metadata in SQLite
         conn.execute(
             "INSERT INTO files (id, filename, content_type, path) VALUES (?, ?, ?, ?)",
-            (file_id, file.filename, file.content_type, file_path)
+            (file_id, file.filename, file.content_type, str(file_path))
         )
         conn.commit()
         
@@ -82,7 +107,7 @@ async def upload_file(file: UploadFile = File(...)):
     finally:
         conn.close()
 
-@app.delete("/files/{file_id}")
+@prefix_router.delete("/files/{file_id}")
 async def delete_file(file_id: str):
     conn = get_db_connection()
     
@@ -110,7 +135,7 @@ async def delete_file(file_id: str):
     finally:
         conn.close()
 
-@app.get("/files/")
+@prefix_router.get("/files/")
 async def list_files():
     conn = get_db_connection()
     
@@ -122,53 +147,8 @@ async def list_files():
     finally:
         conn.close()
 
-# Simulate processing a log file
-def process_log_file(file_path: str, task_id: str, db_path: str):
-    # Connect to the database from this process
-    conn = sqlite3.connect(db_path)
-    
-    try:
-        print(f"Starting processing task {task_id} for file: {file_path}")
-        
-        # Update status to running
-        conn.execute(
-            "UPDATE tasks SET status = ? WHERE id = ?",
-            ("running", task_id)
-        )
-        conn.commit()
-        
-        try:
-            # This would be your actual processing logic
-            # For demonstration, we'll just simulate a CPU-intensive task
-            for i in range(10):
-                print(f"Processing {i*10}% complete for task {task_id}")
-                time.sleep(1)  # Simulate work
-            
-            # Update status to completed
-            conn.execute(
-                "UPDATE tasks SET status = ? WHERE id = ?",
-                ("completed", task_id)
-            )
-            conn.commit()
-            print(f"Completed processing task {task_id}")
-            
-        except Exception as e:
-            # Update status to failed
-            conn.execute(
-                "UPDATE tasks SET status = ? WHERE id = ?",
-                (f"failed: {str(e)}", task_id)
-            )
-            conn.commit()
-            print(f"Failed processing task {task_id}: {e}")
-    
-    finally:
-        conn.close()
-
-# Track running processes
-active_processes: Dict[str, multiprocessing.Process] = {}
-
-@app.post("/process/{file_id}")
-async def start_processing(file_id: str):
+@prefix_router.post("/play/{file_id}")
+async def start_playback(file_id: str):
     conn = get_db_connection()
     
     try:
@@ -181,7 +161,7 @@ async def start_processing(file_id: str):
         
         file_path = file_record["path"]
         task_id = str(uuid.uuid4())
-        
+
         # Create task record in database
         conn.execute(
             "INSERT INTO tasks (id, file_id, status) VALUES (?, ?, ?)",
@@ -191,8 +171,8 @@ async def start_processing(file_id: str):
         
         # Create and start a new process
         process = multiprocessing.Process(
-            target=process_log_file,
-            args=(file_path, task_id, DB_PATH)
+            target=start_player,
+            args=(CONFIG, file_path, task_id)
         )
         process.start()
         
@@ -204,7 +184,7 @@ async def start_processing(file_id: str):
     finally:
         conn.close()
 
-@app.get("/tasks/")
+@prefix_router.get("/tasks/")
 async def list_tasks():
     conn = get_db_connection()
     
@@ -216,7 +196,7 @@ async def list_tasks():
                 active_processes.pop(task_id, None)
         
         # Get tasks from database
-        cursor = conn.execute("SELECT id, file_id, status, start_time FROM tasks")
+        cursor = conn.execute("SELECT * FROM tasks t JOIN files f on f.id == t.file_id")
         tasks = [dict(row) for row in cursor.fetchall()]
         
         # Add live process information
@@ -231,7 +211,7 @@ async def list_tasks():
     finally:
         conn.close()
 
-@app.delete("/tasks/{task_id}")
+@prefix_router.delete("/tasks/{task_id}")
 async def cancel_task(task_id: str):
     conn = get_db_connection()
     
@@ -262,6 +242,47 @@ async def cancel_task(task_id: str):
     
     finally:
         conn.close()
+
+# Simulate processing a log file
+def start_player(config: Config, file_path: str, task_id: str):
+    # Connect to the database from this process
+    conn = sqlite3.connect(config.db_path)
+    
+    try:
+        print(f"Starting playing file {file_path} (task_id={task_id})")
+        
+        # Update status to running
+        conn.execute(
+            "UPDATE tasks SET status = ? WHERE id = ?",
+            ("running", task_id)
+        )
+        conn.commit()
+        
+        try:
+            # This blocks until the process receives SIGTERM
+            player.play(file_path, config.redis_host, config.redis_port)
+            
+            # Update status to completed
+            conn.execute(
+                "UPDATE tasks SET status = ? WHERE id = ?",
+                ("stopped", task_id)
+            )
+            conn.commit()
+            print(f"Stopped playing file {file_path} (task_id={task_id})")
+            
+        except Exception as e:
+            # Update status to failed
+            conn.execute(
+                "UPDATE tasks SET status = ? WHERE id = ?",
+                (f"failed: {str(e)}", task_id)
+            )
+            conn.commit()
+            print(f"Failed playing file {file_path} (task_id={task_id}): {e}")
+    
+    finally:
+        conn.close()
+
+app.include_router(prefix_router)
 
 if __name__ == "__main__":
     import uvicorn

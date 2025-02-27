@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SaeDump Player</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .file-list, .task-list {
+      margin-top: 20px;
+    }
+    .card {
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container mt-4">
+    <h1>SaeDump Player</h1>
+    
+    <!-- File Upload Section -->
+    <div class="card">
+      <div class="card-header">
+        Upload Dumpfile
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <input class="form-control" type="file" id="fileInput">
+        </div>
+        <button id="uploadButton" class="btn btn-primary">Upload</button>
+        <div id="uploadStatus" class="mt-2"></div>
+      </div>
+    </div>
+    
+    <!-- Files List Section -->
+    <div class="card file-list">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        Available Files
+      </div>
+      <div class="card-body">
+        <ul id="filesList" class="list-group">
+          <li class="list-group-item text-center">Loading files...</li>
+        </ul>
+      </div>
+    </div>
+    
+    <!-- Tasks List Section -->
+    <div class="card task-list">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        Running Tasks
+      </div>
+      <div class="card-body">
+        <ul id="tasksList" class="list-group">
+          <li class="list-group-item text-center">Loading tasks...</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Config and state
+    const API_BASE_URL = '/api'; // Set this to your API base URL if needed
+    const REFRESH_INTERVAL = 1000; // 5 seconds
+    let fileRefreshInterval;
+    let taskRefreshInterval;
+    
+    // DOM Elements
+    const fileInput = document.getElementById('fileInput');
+    const uploadButton = document.getElementById('uploadButton');
+    const uploadStatus = document.getElementById('uploadStatus');
+    const filesList = document.getElementById('filesList');
+    const tasksList = document.getElementById('tasksList');
+    
+    // Helper functions
+    function showMessage(element, message, isError = false) {
+      element.innerHTML = `<div class="alert alert-${isError ? 'danger' : 'success'}">${message}</div>`;
+      setTimeout(() => {
+        element.innerHTML = '';
+      }, 3000);
+    }
+    
+    // API functions
+    async function uploadFile() {
+      const file = fileInput.files[0];
+      if (!file) {
+        showMessage(uploadStatus, 'Please select a file first', true);
+        return;
+      }
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      try {
+        uploadButton.disabled = true;
+        
+        const response = await fetch(`${API_BASE_URL}/upload/`, {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (response.ok) {
+          showMessage(uploadStatus, 'File uploaded successfully');
+          fileInput.value = '';
+          fetchFiles();
+        } else {
+          const errorData = await response.json();
+          showMessage(uploadStatus, `Upload failed: ${JSON.stringify(errorData)}`, true);
+        }
+      } catch (error) {
+        showMessage(uploadStatus, `Error: ${error.message}`, true);
+      } finally {
+        uploadButton.disabled = false;
+      }
+    }
+    
+    async function fetchFiles() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/files/`);
+        if (!response.ok) throw new Error('Failed to fetch files');
+        
+        const parsedResponse= await response.json();
+        const files = parsedResponse['files'];
+        
+        if (files.length === 0) {
+          filesList.innerHTML = '<li class="list-group-item text-center">No files available</li>';
+        } else {
+          filesList.innerHTML = '';
+          files.forEach(file => {
+            const listItem = document.createElement('li');
+            listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+            
+            const fileInfo = document.createElement('div');
+            fileInfo.textContent = file.filename;
+            
+            const buttonGroup = document.createElement('div');
+            
+            const playButton = document.createElement('button');
+            playButton.className = 'btn btn-success btn-sm me-2';
+            playButton.textContent = 'Play';
+            playButton.onclick = () => playFile(file.id);
+            
+            const deleteButton = document.createElement('button');
+            deleteButton.className = 'btn btn-danger btn-sm';
+            deleteButton.textContent = 'Delete';
+            deleteButton.onclick = () => deleteFile(file.id);
+            
+            buttonGroup.appendChild(playButton);
+            buttonGroup.appendChild(deleteButton);
+            
+            listItem.appendChild(fileInfo);
+            listItem.appendChild(buttonGroup);
+            
+            filesList.appendChild(listItem);
+          });
+        }
+      } catch (error) {
+        filesList.innerHTML = `<li class="list-group-item text-center text-danger">Error: ${error.message}</li>`;
+      }
+    }
+    
+    async function fetchTasks() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/tasks/`);
+        if (!response.ok) throw new Error('Failed to fetch tasks');
+        
+        const parsedResponse = await response.json();
+        const runningTasks = parsedResponse['tasks'].filter(t => t.status === 'running');
+        
+        if (runningTasks.length === 0) {
+          tasksList.innerHTML = '<li class="list-group-item text-center">No running tasks</li>';
+        } else {
+          tasksList.innerHTML = '';
+          runningTasks.forEach(task => {
+            const listItem = document.createElement('li');
+            listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+            
+            const taskInfo = document.createElement('div');
+            // Assuming task has some description/file_id property
+            taskInfo.textContent = task.filename;
+            
+            const stopButton = document.createElement('button');
+            stopButton.className = 'btn btn-warning btn-sm';
+            stopButton.textContent = 'Stop';
+            stopButton.onclick = () => cancelTask(task.id);
+            
+            listItem.appendChild(taskInfo);
+            listItem.appendChild(stopButton);
+            
+            tasksList.appendChild(listItem);
+          });
+        }
+      } catch (error) {
+        tasksList.innerHTML = `<li class="list-group-item text-center text-danger">Error: ${error.message}</li>`;
+      }
+    }
+    
+    async function playFile(fileId) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/play/${fileId}`, {
+          method: 'POST'
+        });
+        
+        if (response.ok) {
+          fetchTasks();
+        } else {
+          const errorData = await response.json();
+          alert(`Failed to play file: ${JSON.stringify(errorData)}`);
+        }
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+      }
+    }
+    
+    async function deleteFile(fileId) {
+      if (!confirm('Are you sure you want to delete this file?')) return;
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/files/${fileId}`, {
+          method: 'DELETE'
+        });
+        
+        if (response.ok) {
+          fetchFiles();
+        } else {
+          const errorData = await response.json();
+          alert(`Failed to delete file: ${JSON.stringify(errorData)}`);
+        }
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+      }
+    }
+    
+    async function cancelTask(taskId) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, {
+          method: 'DELETE'
+        });
+        
+        if (response.ok) {
+          fetchTasks();
+        } else {
+          const errorData = await response.json();
+          alert(`Failed to cancel task: ${JSON.stringify(errorData)}`);
+        }
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+      }
+    }
+    
+    // Setup event listeners
+    uploadButton.addEventListener('click', uploadFile);
+    
+    // Setup auto-refresh
+    function setupAutoRefresh() {
+      // Clear any existing intervals
+      if (fileRefreshInterval) clearInterval(fileRefreshInterval);
+      if (taskRefreshInterval) clearInterval(taskRefreshInterval);
+      
+      // Setup new intervals
+      fileRefreshInterval = setInterval(fetchFiles, REFRESH_INTERVAL);
+      taskRefreshInterval = setInterval(fetchTasks, REFRESH_INTERVAL);
+    }
+    
+    // Initialize the app
+    function initApp() {
+      fetchFiles();
+      fetchTasks();
+      setupAutoRefresh();
+    }
+    
+    // Start the app when the page loads
+    window.addEventListener('load', initApp);
+  </script>
+</body>
+</html>
