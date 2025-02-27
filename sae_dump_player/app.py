@@ -276,7 +276,7 @@ def start_player(config: Config, file_path: str, task_id: str, mapping: Dict[str
         
         try:
             # This blocks until the process receives SIGTERM
-            player.play(file_path, config.redis_host, config.redis_port)
+            player.play(file_path, config.redis_host, config.redis_port, mapping)
             
             # Update status to completed
             conn.execute(

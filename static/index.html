@@ -12,6 +12,25 @@
     .card {
       margin-bottom: 10px;
     }
+    .mapping-group {
+      display: flex;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .mapping-group label {
+      flex: 1;
+    }
+    .mapping-group .arrow {
+      margin: 0 10px;
+    }
+    .mapping-group input {
+      flex: 2;
+    }
+    .file-streams {
+      color: grey;
+      font-size: 0.9em;
+      margin-left: 10px;
+    }
   </style>
 </head>
 <body>
@@ -57,12 +76,35 @@
     </div>
   </div>
 
+  <!-- Modal for custom mapping -->
+  <div class="modal fade" id="mappingModal" tabindex="-1" aria-labelledby="mappingModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="mappingModalLabel">Set Custom Mapping</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="mappingForm">
+            <!-- Dynamic content will be inserted here -->
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-success" id="modalPlayButton">Play</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     // Config and state
     const API_BASE_URL = '/api'; // Set this to your API base URL if needed
     const REFRESH_INTERVAL = 1000; // 5 seconds
     let fileRefreshInterval;
     let taskRefreshInterval;
+    let currentFileId = null;
     
     // DOM Elements
     const fileInput = document.getElementById('fileInput');
@@ -70,6 +112,9 @@
     const uploadStatus = document.getElementById('uploadStatus');
     const filesList = document.getElementById('filesList');
     const tasksList = document.getElementById('tasksList');
+    const mappingModal = new bootstrap.Modal(document.getElementById('mappingModal'));
+    const mappingForm = document.getElementById('mappingForm');
+    const modalPlayButton = document.getElementById('modalPlayButton');
     
     // Helper functions
     function showMessage(element, message, isError = false) {
@@ -136,12 +181,17 @@
             const fileName = document.createElement('span');
             fileName.textContent = file.filename;
             
+            const fileStreams = document.createElement('span');
+            fileStreams.className = 'file-streams';
+            fileStreams.textContent = `(${file.streams.join(', ')})`;
+            
             const buttonGroup = document.createElement('div');
+            buttonGroup.className = 'ms-auto';
             
             const playButton = document.createElement('button');
             playButton.className = 'btn btn-success btn-sm me-2';
             playButton.textContent = 'Play';
-            playButton.onclick = () => playFile(file.id);
+            playButton.onclick = () => showMappingModal(file.id, file.streams);
             
             const deleteButton = document.createElement('button');
             deleteButton.className = 'btn btn-danger btn-sm';
@@ -152,34 +202,10 @@
             buttonGroup.appendChild(deleteButton);
             
             fileInfo.appendChild(fileName);
+            fileInfo.appendChild(fileStreams);
             fileInfo.appendChild(buttonGroup);
             
             listItem.appendChild(fileInfo);
-            
-            // Create table for streams
-            const streamsTable = document.createElement('table');
-            streamsTable.className = 'table table-sm mt-2';
-            
-            file.streams.forEach(stream => {
-              const row = document.createElement('tr');
-              
-              const labelCell = document.createElement('td');
-              labelCell.textContent = stream;
-              
-              const inputCell = document.createElement('td');
-              const inputField = document.createElement('input');
-              inputField.type = 'text';
-              inputField.className = 'form-control form-control-sm';
-              inputField.value = stream; // Set initial value to the stream name
-              inputField.name = stream; // Set the name attribute to the stream name
-              
-              inputCell.appendChild(inputField);
-              row.appendChild(labelCell);
-              row.appendChild(inputCell);
-              streamsTable.appendChild(row);
-            });
-            
-            listItem.appendChild(streamsTable);
             filesList.appendChild(listItem);
           });
         }
@@ -222,6 +248,62 @@
         tasksList.innerHTML = `<li class="list-group-item text-center text-danger">Error: ${error.message}</li>`;
       }
     }
+    
+    function showMappingModal(fileId, streams) {
+      currentFileId = fileId;
+      mappingForm.innerHTML = '';
+      streams.forEach(stream => {
+        const formGroup = document.createElement('div');
+        formGroup.className = 'mapping-group';
+        
+        const label = document.createElement('label');
+        label.textContent = stream;
+        
+        const arrow = document.createElement('span');
+        arrow.className = 'arrow';
+        arrow.textContent = '→';
+        
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'form-control';
+        input.name = stream;
+        input.value = stream; // Set initial value to the stream name
+        
+        formGroup.appendChild(label);
+        formGroup.appendChild(arrow);
+        formGroup.appendChild(input);
+        mappingForm.appendChild(formGroup);
+      });
+      mappingModal.show();
+    }
+    
+    modalPlayButton.addEventListener('click', async () => {
+      const mapping = {};
+      const formData = new FormData(mappingForm);
+      formData.forEach((value, key) => {
+        mapping[key] = value;
+      });
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/play`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ mapping: mapping, file_id: currentFileId })
+        });
+        
+        if (response.ok) {
+          mappingModal.hide();
+          fetchTasks();
+        } else {
+          const errorData = await response.json();
+          alert(`Failed to start playback: ${JSON.stringify(errorData)}`);
+        }
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+      }
+    });
     
     async function playFile(fileId) {
       const listItem = document.querySelector(`li[data-file-id="${fileId}"]`);

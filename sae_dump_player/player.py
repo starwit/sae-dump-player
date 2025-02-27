@@ -3,7 +3,7 @@ import signal
 import sys
 import threading
 import time
-from typing import List
+from typing import List, Dict
 
 import pybase64
 from visionapi.sae_pb2 import SaeMessage
@@ -39,7 +39,7 @@ def set_frame_timestamp_to_now(proto_bytes: str):
     
     return proto.SerializeToString()
 
-def play(file_path: pathlib.Path, redis_host: str, redis_port: int) -> None:
+def play(file_path: pathlib.Path, redis_host: str, redis_port: int, mapping: Dict[str, str]) -> None:
 
     stop_event = register_stop_handler()
 
@@ -63,7 +63,11 @@ def play(file_path: pathlib.Path, redis_host: str, redis_port: int) -> None:
 
                 wait_until(playback_start, dump_meta.start_time, event.meta.record_time)
 
-                publish(event.meta.source_stream, proto_bytes)
+                target_stream = event.meta.source_stream
+                if event.meta.source_stream in mapping:
+                    target_stream = mapping[event.meta.source_stream]
+
+                publish(target_stream, proto_bytes)
 
                 if stop_event.is_set():
                     break
