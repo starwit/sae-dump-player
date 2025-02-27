@@ -4,15 +4,17 @@ import shutil
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Dict
+import json
+from typing import Dict, Annotated
 
-from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
+from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
 from . import player
+from .player import get_streams
 
 
 class Config(BaseSettings):
@@ -47,6 +49,7 @@ def init_db():
         filename TEXT NOT NULL,
         content_type TEXT,
         path TEXT NOT NULL,
+        streams TEXT,
         upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
@@ -56,6 +59,7 @@ def init_db():
         id TEXT PRIMARY KEY,
         file_id TEXT NOT NULL,
         status TEXT NOT NULL,
+        mapping TEXT,
         start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (file_id) REFERENCES files (id)
     )
@@ -95,10 +99,12 @@ async def upload_file(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
+        contained_streams = get_streams(file_path)
+        
         # Store metadata in SQLite
         conn.execute(
-            "INSERT INTO files (id, filename, content_type, path) VALUES (?, ?, ?, ?)",
-            (file_id, file.filename, file.content_type, str(file_path))
+            "INSERT INTO files (id, filename, content_type, path, streams) VALUES (?, ?, ?, ?, ?)",
+            (file_id, file.filename, file.content_type, str(file_path), json.dumps(contained_streams))
         )
         conn.commit()
         
@@ -140,20 +146,29 @@ async def list_files():
     conn = get_db_connection()
     
     try:
-        cursor = conn.execute("SELECT id, filename, content_type, path, upload_time FROM files")
-        files = [dict(row) for row in cursor.fetchall()]
+        cursor = conn.execute("SELECT * FROM files")
+        files = []
+        for row in cursor.fetchall():
+            file = dict(row)
+            file["streams"] = json.loads(row["streams"])
+            files.append(file)
+        
         return {"files": files}
     
     finally:
         conn.close()
 
-@prefix_router.post("/play/{file_id}")
-async def start_playback(file_id: str):
+class PlaybackBody(BaseModel):
+    file_id: str
+    mapping: Dict[str, str]
+
+@prefix_router.post("/play")
+async def start_playback(body: PlaybackBody):
     conn = get_db_connection()
     
     try:
         # Check if file exists
-        cursor = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,))
+        cursor = conn.execute("SELECT path FROM files WHERE id = ?", (body.file_id,))
         file_record = cursor.fetchone()
         
         if not file_record:
@@ -164,22 +179,22 @@ async def start_playback(file_id: str):
 
         # Create task record in database
         conn.execute(
-            "INSERT INTO tasks (id, file_id, status) VALUES (?, ?, ?)",
-            (task_id, file_id, "starting")
+            "INSERT INTO tasks (id, file_id, status, mapping) VALUES (?, ?, ?, ?)",
+            (task_id, body.file_id, "starting", json.dumps(body.mapping))
         )
         conn.commit()
         
         # Create and start a new process
         process = multiprocessing.Process(
             target=start_player,
-            args=(CONFIG, file_path, task_id)
+            args=(CONFIG, file_path, task_id, body.mapping)
         )
         process.start()
         
         # Store the process
         active_processes[task_id] = process
         
-        return {"task_id": task_id, "status": "started", "file_id": file_id}
+        return {"task_id": task_id, "status": "started", "file_id": body.file_id}
     
     finally:
         conn.close()
@@ -205,6 +220,7 @@ async def list_tasks():
                 task["has_active_process"] = True
             else:
                 task["has_active_process"] = False
+            task["mapping"] = json.loads(task["mapping"]) if task["mapping"] else {}
         
         return {"tasks": tasks}
     
@@ -244,12 +260,12 @@ async def cancel_task(task_id: str):
         conn.close()
 
 # Simulate processing a log file
-def start_player(config: Config, file_path: str, task_id: str):
+def start_player(config: Config, file_path: str, task_id: str, mapping: Dict[str, str]):
     # Connect to the database from this process
     conn = sqlite3.connect(config.db_path)
     
     try:
-        print(f"Starting playing file {file_path} (task_id={task_id})")
+        print(f"Starting playing file {file_path} (task_id={task_id}) with mapping {mapping}")
         
         # Update status to running
         conn.execute(

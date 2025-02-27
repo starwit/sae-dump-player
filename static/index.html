@@ -118,7 +118,7 @@
         const response = await fetch(`${API_BASE_URL}/files/`);
         if (!response.ok) throw new Error('Failed to fetch files');
         
-        const parsedResponse= await response.json();
+        const parsedResponse = await response.json();
         const files = parsedResponse['files'];
         
         if (files.length === 0) {
@@ -127,10 +127,14 @@
           filesList.innerHTML = '';
           files.forEach(file => {
             const listItem = document.createElement('li');
-            listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+            listItem.className = 'list-group-item';
+            listItem.setAttribute('data-file-id', file.id);
             
             const fileInfo = document.createElement('div');
-            fileInfo.textContent = file.filename;
+            fileInfo.className = 'd-flex justify-content-between align-items-center';
+            
+            const fileName = document.createElement('span');
+            fileName.textContent = file.filename;
             
             const buttonGroup = document.createElement('div');
             
@@ -147,9 +151,35 @@
             buttonGroup.appendChild(playButton);
             buttonGroup.appendChild(deleteButton);
             
-            listItem.appendChild(fileInfo);
-            listItem.appendChild(buttonGroup);
+            fileInfo.appendChild(fileName);
+            fileInfo.appendChild(buttonGroup);
             
+            listItem.appendChild(fileInfo);
+            
+            // Create table for streams
+            const streamsTable = document.createElement('table');
+            streamsTable.className = 'table table-sm mt-2';
+            
+            file.streams.forEach(stream => {
+              const row = document.createElement('tr');
+              
+              const labelCell = document.createElement('td');
+              labelCell.textContent = stream;
+              
+              const inputCell = document.createElement('td');
+              const inputField = document.createElement('input');
+              inputField.type = 'text';
+              inputField.className = 'form-control form-control-sm';
+              inputField.value = stream; // Set initial value to the stream name
+              inputField.name = stream; // Set the name attribute to the stream name
+              
+              inputCell.appendChild(inputField);
+              row.appendChild(labelCell);
+              row.appendChild(inputCell);
+              streamsTable.appendChild(row);
+            });
+            
+            listItem.appendChild(streamsTable);
             filesList.appendChild(listItem);
           });
         }
@@ -175,8 +205,7 @@
             listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
             
             const taskInfo = document.createElement('div');
-            // Assuming task has some description/file_id property
-            taskInfo.textContent = task.filename;
+            taskInfo.textContent = `${task.filename} (Mapping: ${JSON.stringify(task.mapping)})`;
             
             const stopButton = document.createElement('button');
             stopButton.className = 'btn btn-warning btn-sm';
@@ -195,9 +224,19 @@
     }
     
     async function playFile(fileId) {
+      const listItem = document.querySelector(`li[data-file-id="${fileId}"]`);
+      const mapping = {};
+      listItem.querySelectorAll('table input').forEach(input => {
+        mapping[input.name] = input.value;
+      });
+
       try {
-        const response = await fetch(`${API_BASE_URL}/play/${fileId}`, {
-          method: 'POST'
+        const response = await fetch(`${API_BASE_URL}/play`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ mapping: mapping, file_id: fileId })
         });
         
         if (response.ok) {

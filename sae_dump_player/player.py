@@ -3,6 +3,7 @@ import signal
 import sys
 import threading
 import time
+from typing import List
 
 import pybase64
 from visionapi.sae_pb2 import SaeMessage
@@ -72,3 +73,12 @@ def play(file_path: pathlib.Path, redis_host: str, redis_port: int) -> None:
             else:
                 input_file.seek(0)
             
+def get_streams(file_path: pathlib.Path) -> List[str]:
+    first_message = None
+    with open(file_path, 'r') as input_file:
+        first_message = next(message_splitter(input_file), None)
+    if first_message is None:
+        return []
+    
+    dump_meta = DumpMeta.model_validate_json(first_message)
+    return dump_meta.recorded_streams
