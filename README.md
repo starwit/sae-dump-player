@@ -19,3 +19,6 @@ id=$(curl -X 'GET' 'http://localhost:8000/tasks/' -H 'accept: application/json' 
 curl -X 'DELETE' "http://localhost:8000/tasks/$id" -H 'accept: application' && \
 unset id
 ```
+
+## How to run github actions locally for testing
+`act -W .github/workflows/build-publish-latest.yml -j 'build' -P self-hosted=-self-hosted`
