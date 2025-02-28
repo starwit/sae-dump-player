@@ -5,9 +5,9 @@ import sqlite3
 import uuid
 from pathlib import Path
 import json
-from typing import Dict, Annotated
+from typing import Dict
 
-from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile, Body
+from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel

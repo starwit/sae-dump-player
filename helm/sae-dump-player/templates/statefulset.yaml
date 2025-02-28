@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "sae-dump-player.fullname" . }}
+  labels:
+    {{- include "sae-dump-player.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "sae-dump-player.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sae-dump-player.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "sae-dump-player.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # initContainers:
+      #   - name: init-chmod
+      #     image: busybox
+      #     command: ['sh', '-c', 'chmod -R 777 /data']
+      #     volumeMounts:
+      #       - name: data
+      #         mountPath: /data
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: REDIS_HOST
+              value: {{ .Values.config.redisHost | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.config.redisPort | quote }}
+            - name: UPLOAD_DIR
+              value: {{ .Values.config.uploadDir | quote }}
+            - name: DB_PATH
+              value: {{ .Values.config.dbPath | quote }}
+          {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+              httpGet:
+                path: /
+                port: http
+          readinessProbe:
+              httpGet:
+                path: /
+                port: http
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- with .Values.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

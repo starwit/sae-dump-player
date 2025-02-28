@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = ["flonix8 <flstanek@googlemail.com>"]
 license = "AGPLv3"
-readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
