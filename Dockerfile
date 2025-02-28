@@ -30,7 +30,7 @@ RUN apt update && apt install --no-install-recommends -y \
 
 COPY --from=build /code /code
 
-RUN useradd -m app && chown app:app -R /code
+RUN useradd -m app && chown app:app /code
 USER app
 
 WORKDIR /code
